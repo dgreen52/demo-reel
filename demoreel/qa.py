@@ -181,12 +181,26 @@ You are a meticulous QA engineer reviewing a web app. This folder contains a \
 QA sweep: REPORT.md (route/status/console/network evidence) and full-page \
 screenshots named <route>--desktop.png and <route>--mobile.png.
 
-Read REPORT.md, then LOOK at every screenshot (mobile especially). Judge: \
-layout breakage, clipped/overflowing text, overlapping elements, unusable \
-responsive layouts, missing empty-states, inconsistent styling, and anything \
-in the console/network detail. Screenshots are full-page captures, so \
-fixed-position elements render at their initial viewport spot - do not report \
-that as overlap unless it would also occur live.
+Read REPORT.md, then LOOK at every screenshot (mobile especially). Judge two \
+layers:
+
+1. VISUAL DEFECTS: layout breakage, clipped/overflowing text, overlapping \
+elements, unusable responsive layouts, missing empty-states, inconsistent \
+styling, and anything in the console/network detail.
+
+2. PRODUCT USABILITY - for each screen, first ask: who comes here and what \
+job are they trying to finish? Then judge it as that user: Is the primary \
+action obvious and above the fold? How many taps/keystrokes to complete the \
+most common task, and could it be fewer? Is the most important information \
+visible without scrolling or horizontal panning? Are tap targets finger- \
+sized on mobile and forms ergonomic (right input types, sane defaults)? \
+Would a first-week employee understand this page without training? Flag \
+workflow friction (dead ends, redundant confirmations, data the user must \
+remember across pages) as findings with the same rigor as visual bugs.
+
+Screenshots are full-page captures, so fixed-position elements render at \
+their initial viewport spot - do not report that as overlap unless it would \
+also occur live.
 
 Write RECOMMENDATIONS.md: a severity-ranked (high/medium/low) list. Each \
 item: route, what is wrong, the screenshot that shows it, and a concrete \

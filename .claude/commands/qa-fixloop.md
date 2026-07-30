@@ -5,6 +5,16 @@ description: Batch-find UI issues with a QA sweep, then fix one-by-one with pixe
 Run the QA fix-loop against the app the user names (ask for --url/--setup if
 not obvious from context). Follow this protocol exactly:
 
+## Phase 0 — know the humans (30 seconds, changes everything)
+
+Before sweeping, establish from the user or project docs: who actually uses
+this app, on what device, in what physical situation, arriving from where?
+(e.g. "maintenance techs, phones, standing at a shelf mid-task, often
+arriving via a QR label scan; admins on desktops doing purchasing.") Every
+usability judgment in Phase 1 is made AS those people in that situation —
+one-handed phone use, interrupted constantly, no patience for scrolling —
+not as a developer admiring a layout.
+
 ## Phase 1 — batch diagnosis (the expensive pass; do it ONCE)
 
 1. Make sure the target app is running (start it in the background if needed).
@@ -13,7 +23,14 @@ not obvious from context). Follow this protocol exactly:
 3. Read REPORT.md, then READ EVERY SCREENSHOT (mobile especially) and write
    `qa-fixloop/FINDINGS.md`: severity-ranked (high/medium/low), each with
    route, evidence screenshot, and a concrete proposed fix. Include console
-   and network evidence. If a RECOMMENDATIONS.md already exists from a
+   and network evidence. Judge USABILITY, not just rendering: for each
+   screen, name the user and the job they came to finish, then ask — is the
+   primary action obvious, how many taps to the common task, is key info
+   above the fold, are targets finger-sized, would a first-week employee
+   get it without training? Workflow friction is a finding with the same
+   rigor as a visual bug (but mark usability items as `[UX]` — the human
+   decides product changes; don't auto-"fix" workflow design in Phase 2
+   without explicit approval). If a RECOMMENDATIONS.md already exists from a
    --judge run, start from it and verify each item against the screenshots
    instead of re-judging.
 
