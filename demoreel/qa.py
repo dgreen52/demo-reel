@@ -60,6 +60,11 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
     queue = list(dict.fromkeys(routes or ["/"]))
     visited: list[str] = []
     results: list[dict] = []
+    # sort-permutation links (?sort=x&dir=y) on the same page are visually
+    # near-identical; cap how many query variants of one path we'll queue
+    # (found by automated QA review)
+    QUERY_VARIANT_CAP = 2
+    query_variants: dict[str, int] = {}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -127,9 +132,15 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
                         u = urllib.parse.urlparse(href)
                         if f"{u.scheme}://{u.netloc}" == origin:
                             rel = u.path + (f"?{u.query}" if u.query else "")
-                            if rel not in visited and rel not in queue \
-                                    and not SKIP.search(rel):
-                                queue.append(rel)
+                            if rel in visited or rel in queue \
+                                    or SKIP.search(rel):
+                                continue
+                            if u.query:
+                                seen = query_variants.get(u.path, 0)
+                                if seen >= QUERY_VARIANT_CAP:
+                                    continue
+                                query_variants[u.path] = seen + 1
+                            queue.append(rel)
             except Exception as e:
                 entry["error"] = str(e)[:300]
             results.append(entry)
