@@ -68,6 +68,26 @@ and catches the JS errors nobody pasted. Build → snap → look → fix, in sec
 no human screenshotting anything. (This README's demos were QA'd exactly that way.)
 The control API binds to localhost only.
 
+## QA mode: an agent-powered QA department 🔍
+
+`demoreel.qa` sweeps your app and collects the evidence a QA pass needs:
+
+```
+python -m demoreel.qa --url http://127.0.0.1:5757/login --setup scenarios/parts_login.py --discover --max 25
+```
+
+Per route: a **desktop and a mobile screenshot**, console messages and JS
+errors, failed network requests, and HTTP status — emitted as `report.json` +
+`REPORT.md`. The judgment layer is deliberately not automated: hand the folder
+to a vision-capable AI agent to read every screenshot and write `FINDINGS.md`.
+
+The loop this enables: **sweep → agent reads pixels → findings → agent fixes
+the code → re-sweep the route → fix verified by pixels.** First real run (18
+routes of a Flask inventory system) caught a navbar wordmark clipping at
+390px; the fix was applied and pixel-verified without a human screenshotting
+anything. See [qa-out/FINDINGS.md](qa-out/FINDINGS.md) for what a findings
+pass looks like.
+
 ## Why bother
 
 - **Reproducible**: the demo is code. App changed? Re-run the scenario, fresh GIF.

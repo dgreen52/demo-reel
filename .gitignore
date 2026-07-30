@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 .liveview/
+qa-out/*
+!qa-out/FINDINGS.md
+qa-recheck/
+qa-routes-recheck.txt
