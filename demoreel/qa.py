@@ -64,22 +64,32 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_context(viewport=dict(DESKTOP)).new_page()
+        # The mobile pass emulates a REAL phone (mobile user-agent, touch,
+        # device scale) - many apps branch on user-agent server-side, so a
+        # desktop UA in a skinny window shows a layout no real user sees.
+        mdev = p.devices.get("iPhone 13", {})
+        # scale 1: evidence screenshots in logical px, not 3x retina monsters
+        mpage = browser.new_context(**{**mdev, "viewport": dict(MOBILE),
+                                       "device_scale_factor": 1}).new_page()
 
         console: list[dict] = []
         netfail: list[dict] = []
-        page.on("console", lambda m: console.append(
-            {"type": m.type, "text": m.text[:500]}))
-        page.on("pageerror", lambda e: console.append(
-            {"type": "pageerror", "text": str(e)[:500]}))
-        page.on("requestfailed", lambda r: netfail.append(
-            {"url": r.url[:300], "failure": str(r.failure)[:200]}))
+        for vp, pg in (("desktop", page), ("mobile", mpage)):
+            pg.on("console", lambda m, v=vp: console.append(
+                {"vp": v, "type": m.type, "text": m.text[:500]}))
+            pg.on("pageerror", lambda e, v=vp: console.append(
+                {"vp": v, "type": "pageerror", "text": str(e)[:500]}))
+            pg.on("requestfailed", lambda r, v=vp: netfail.append(
+                {"vp": v, "url": r.url[:300], "failure": str(r.failure)[:200]}))
 
-        page.goto(base)
         if setup:
             spec = importlib.util.spec_from_file_location("setup", setup)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
-            mod.run(page)
+        for pg in (page, mpage):
+            pg.goto(base)
+            if setup:
+                mod.run(pg)  # login once per context; sessions persist
 
         while queue and len(visited) < max_routes:
             path = queue.pop(0)
@@ -97,20 +107,14 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
                 time.sleep(0.3)
                 entry["status"] = resp.status if resp else None
                 entry["title"] = page.title()
-
-                page.set_viewport_size(DESKTOP)
                 page.screenshot(path=str(out / f"{slug}--desktop.png"),
                                 full_page=True)
-                page.set_viewport_size(MOBILE)
-                # reload so load-time responsive JS (innerWidth checks etc.)
-                # actually runs at phone width - resizing alone only exercises
-                # CSS, which hides an entire class of mobile behavior
-                page.reload(timeout=15000)
-                page.wait_for_load_state("networkidle", timeout=8000)
-                time.sleep(0.4)
-                page.screenshot(path=str(out / f"{slug}--mobile.png"),
-                                full_page=True)
-                page.set_viewport_size(DESKTOP)
+
+                mpage.goto(urllib.parse.urljoin(origin, path), timeout=15000)
+                mpage.wait_for_load_state("networkidle", timeout=8000)
+                time.sleep(0.3)
+                mpage.screenshot(path=str(out / f"{slug}--mobile.png"),
+                                 full_page=True)
 
                 entry["console"] = [c for c in console
                                     if c["type"] in ("error", "warning",
@@ -181,8 +185,9 @@ You are a meticulous QA engineer reviewing a web app. This folder contains a \
 QA sweep: REPORT.md (route/status/console/network evidence) and full-page \
 screenshots named <route>--desktop.png and <route>--mobile.png.
 
-Read REPORT.md, then LOOK at every screenshot (mobile especially). Judge two \
-layers:
+Read REPORT.md, then LOOK at every screenshot. Desktop is the PRIMARY \
+surface - judge it first and hardest; the mobile pass (captured with real \
+phone emulation) is secondary but still required. Judge two layers:
 
 1. VISUAL DEFECTS: layout breakage, clipped/overflowing text, overlapping \
 elements, unusable responsive layouts, missing empty-states, inconsistent \
