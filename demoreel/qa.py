@@ -43,6 +43,13 @@ def _slug(path: str) -> str:
     return s or "root"
 
 
+def _path_pattern(path: str) -> str:
+    # collapse numeric path segments (record IDs) so /requisitions/58654/print
+    # and /requisitions/58655/print count as the same pattern for capping
+    # (found by automated QA review)
+    return "/".join("#" if seg.isdigit() else seg for seg in path.split("/"))
+
+
 def _load_routes(routes_file: str | None) -> list[str]:
     if not routes_file:
         return []
@@ -65,6 +72,12 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
     # (found by automated QA review)
     QUERY_VARIANT_CAP = 2
     query_variants: dict[str, int] = {}
+    # same problem, different shape: distinct detail-page paths (e.g. a
+    # /requisitions/<id>/print link per row on a list page) explode the
+    # route budget just like query variants did; cap instances per
+    # numeric-collapsed path pattern (found by automated QA review)
+    PATH_PATTERN_CAP = 2
+    path_patterns: dict[str, int] = {}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -140,6 +153,12 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
                                 if seen >= QUERY_VARIANT_CAP:
                                     continue
                                 query_variants[u.path] = seen + 1
+                            pattern = _path_pattern(u.path)
+                            if pattern != u.path:
+                                seen = path_patterns.get(pattern, 0)
+                                if seen >= PATH_PATTERN_CAP:
+                                    continue
+                                path_patterns[pattern] = seen + 1
                             queue.append(rel)
             except Exception as e:
                 entry["error"] = str(e)[:300]
