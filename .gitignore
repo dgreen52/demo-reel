@@ -7,3 +7,4 @@ qa-out/*
 !qa-out/FINDINGS.md
 qa-recheck/
 qa-routes-recheck.txt
+qa-recheck*/

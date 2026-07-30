@@ -102,7 +102,12 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
                 page.screenshot(path=str(out / f"{slug}--desktop.png"),
                                 full_page=True)
                 page.set_viewport_size(MOBILE)
-                time.sleep(0.4)  # let responsive layout settle
+                # reload so load-time responsive JS (innerWidth checks etc.)
+                # actually runs at phone width - resizing alone only exercises
+                # CSS, which hides an entire class of mobile behavior
+                page.reload(timeout=15000)
+                page.wait_for_load_state("networkidle", timeout=8000)
+                time.sleep(0.4)
                 page.screenshot(path=str(out / f"{slug}--mobile.png"),
                                 full_page=True)
                 page.set_viewport_size(DESKTOP)
@@ -171,6 +176,48 @@ def _write_md(report: dict, out: Path) -> None:
     (out / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+JUDGE_PROMPT = """\
+You are a meticulous QA engineer reviewing a web app. This folder contains a \
+QA sweep: REPORT.md (route/status/console/network evidence) and full-page \
+screenshots named <route>--desktop.png and <route>--mobile.png.
+
+Read REPORT.md, then LOOK at every screenshot (mobile especially). Judge: \
+layout breakage, clipped/overflowing text, overlapping elements, unusable \
+responsive layouts, missing empty-states, inconsistent styling, and anything \
+in the console/network detail. Screenshots are full-page captures, so \
+fixed-position elements render at their initial viewport spot - do not report \
+that as overlap unless it would also occur live.
+
+Write RECOMMENDATIONS.md: a severity-ranked (high/medium/low) list. Each \
+item: route, what is wrong, the screenshot that shows it, and a concrete \
+suggested fix. RECOMMEND ONLY - do not modify any application code. \
+End with a one-paragraph overall health summary."""
+
+
+def judge(out: Path, judge_cmd: str) -> bool:
+    """Run a headless AI judgment pass over the sweep evidence."""
+    import subprocess
+    print(f"\njudging with: {judge_cmd} (this reads every screenshot; "
+          f"it can take a few minutes)")
+    try:
+        r = subprocess.run(
+            [judge_cmd, "-p", JUDGE_PROMPT,
+             "--allowedTools", "Read", "Glob", "Grep", "Write"],
+            cwd=str(out), timeout=1200)
+        ok = r.returncode == 0 and (out / "RECOMMENDATIONS.md").exists()
+    except FileNotFoundError:
+        print(f"judge command not found: {judge_cmd}\n"
+              "install the Claude CLI:  irm https://claude.ai/install.ps1 | iex\n"
+              "(evidence is still in the output folder - judge it manually)")
+        return False
+    except subprocess.TimeoutExpired:
+        print("judge timed out; evidence folder is still usable")
+        return False
+    if ok:
+        print(f"recommendations: {out / 'RECOMMENDATIONS.md'}")
+    return ok
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="demoreel.qa")
     ap.add_argument("--url", required=True, help="base URL (login page ok)")
@@ -180,6 +227,11 @@ def main() -> None:
                     help="crawl same-origin links from swept pages")
     ap.add_argument("--max", type=int, default=25)
     ap.add_argument("-o", "--out", default="qa-out")
+    ap.add_argument("--judge", action="store_true",
+                    help="after the sweep, run a headless AI judgment pass "
+                         "that writes RECOMMENDATIONS.md")
+    ap.add_argument("--judge-cmd", default="claude",
+                    help="command for the judge (default: claude)")
     a = ap.parse_args()
     routes = _load_routes(a.routes)
     if not routes and not a.discover:
@@ -188,6 +240,8 @@ def main() -> None:
     print(f"\nreport: {Path(a.out) / 'REPORT.md'}")
     errs = sum(len(r.get('console', [])) for r in report['results'])
     print(f"routes: {report['swept']}   console errors/warnings: {errs}")
+    if a.judge:
+        judge(Path(a.out), a.judge_cmd)
 
 
 if __name__ == "__main__":
