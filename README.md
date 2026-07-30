@@ -50,6 +50,24 @@ def run(page, act):
 `act` adds human pacing (`pause`, `type_like_human`, `move_click`) so recordings
 don't look like a robot sneezed on the keyboard.
 
+## Live mode: eyes for AI coding agents 👁️
+
+`demoreel.live` turns the same machinery into a **live viewer** an AI agent can use
+while it builds: a daemon holds one persistent Playwright session on your app
+(log in once via `--setup`), and every check after that is ~1 second:
+
+```
+python -m demoreel.live serve --url http://127.0.0.1:5757/login --setup scenarios/parts_login.py
+python -m demoreel.live snap /dashboard        # → .liveview/snap-001.png
+python -m demoreel.live snap -s ".navbar"      # screenshot one element
+python -m demoreel.live console                # console messages + JS errors
+```
+
+The agent reads the PNG and *sees exactly what you'd see* — then reads `console`
+and catches the JS errors nobody pasted. Build → snap → look → fix, in seconds,
+no human screenshotting anything. (This README's demos were QA'd exactly that way.)
+The control API binds to localhost only.
+
 ## Why bother
 
 - **Reproducible**: the demo is code. App changed? Re-run the scenario, fresh GIF.
