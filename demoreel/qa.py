@@ -36,6 +36,12 @@ MOBILE = {"width": 390, "height": 844}
 SKIP = re.compile(
     r"logout|signout|delete|remove|restore|restart|shutdown|reset|"
     r"\.(zpl|pdf|csv|xlsx|zip|png|jpg)$", re.I)
+# Chromium's full-page screenshot capture silently paints the tail of very
+# tall pages as blank background instead of real content (observed: a
+# 46604px page went blank past y=~18734). Flag pages taller than this so a
+# blank tail in the evidence reads as "known capture ceiling", not a bug
+# (found by automated QA review)
+TALL_PAGE_WARN_PX = 15000
 
 
 def _slug(path: str) -> str:
@@ -61,7 +67,7 @@ def _load_routes(routes_file: str | None) -> list[str]:
 
 
 def sweep(base: str, routes: list[str], setup: str | None, out: Path,
-          discover: bool, max_routes: int) -> dict:
+          discover: bool, max_routes: int, baseline: dict | None = None) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     origin = f"{urllib.parse.urlparse(base).scheme}://{urllib.parse.urlparse(base).netloc}"
     queue = list(dict.fromkeys(routes or ["/"]))
@@ -119,6 +125,7 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
             slug = _slug(path)
             entry = {"path": path, "slug": slug}
             try:
+                t0 = time.time()
                 resp = page.goto(urllib.parse.urljoin(origin, path),
                                  timeout=15000)
                 page.wait_for_load_state("networkidle", timeout=8000)
@@ -127,12 +134,39 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
                 entry["title"] = page.title()
                 page.screenshot(path=str(out / f"{slug}--desktop.png"),
                                 full_page=True)
+                dheight = page.evaluate("document.documentElement.scrollHeight")
+                if dheight > TALL_PAGE_WARN_PX:
+                    entry.setdefault("warnings", []).append(
+                        f"desktop page is {dheight}px tall — full-page "
+                        "screenshot may render blank past ~15-19k px "
+                        "(Chromium capture ceiling, not an app bug)")
+                desktop_ms = round((time.time() - t0) * 1000)
 
+                t1 = time.time()
                 mpage.goto(urllib.parse.urljoin(origin, path), timeout=15000)
                 mpage.wait_for_load_state("networkidle", timeout=8000)
                 time.sleep(0.3)
                 mpage.screenshot(path=str(out / f"{slug}--mobile.png"),
                                  full_page=True)
+                mheight = mpage.evaluate("document.documentElement.scrollHeight")
+                if mheight > TALL_PAGE_WARN_PX:
+                    entry.setdefault("warnings", []).append(
+                        f"mobile page is {mheight}px tall — full-page "
+                        "screenshot may render blank past ~15-19k px "
+                        "(Chromium capture ceiling, not an app bug)")
+                mobile_ms = round((time.time() - t1) * 1000)
+
+                # per-route load time, so a slow-creeping page shows up as
+                # data instead of a vague "feels slower lately"
+                # (found by automated QA review — Nox)
+                entry["load_ms"] = {"desktop": desktop_ms, "mobile": mobile_ms}
+                if baseline and path in baseline:
+                    for vp, ms in entry["load_ms"].items():
+                        prev = baseline[path].get(vp)
+                        if prev and prev > 100 and ms > prev * 2:
+                            entry.setdefault("warnings", []).append(
+                                f"{vp} load time regression: {prev}ms -> "
+                                f"{ms}ms (>2x vs baseline sweep)")
 
                 entry["console"] = [c for c in console
                                     if c["type"] in ("error", "warning",
@@ -181,27 +215,40 @@ def _write_md(report: dict, out: Path) -> None:
         "This file is the *evidence*. The findings pass — an agent or human",
         "reading every screenshot and judging what's wrong — comes next and",
         "belongs in `FINDINGS.md`.", "",
-        "| Route | Status | Console errors | Failed requests | Screenshots |",
-        "|---|---|---|---|---|",
+        "| Route | Status | Load ms (desktop/mobile) | Console errors | "
+        "Failed requests | Screenshots |",
+        "|---|---|---|---|---|---|",
     ]
     for r in report["results"]:
         if "error" in r:
-            lines.append(f"| `{r['path']}` | NAV ERROR | — | — | {r['error']} |")
+            lines.append(
+                f"| `{r['path']}` | NAV ERROR | — | — | — | {r['error']} |")
             continue
         ncon = len(r.get("console", []))
         nnet = len(r.get("failed_requests", []))
         con = f"⚠️ {ncon}" if ncon else "0"
         net = f"⚠️ {nnet}" if nnet else "0"
+        lm = r.get("load_ms", {})
+        load = f"{lm.get('desktop', '—')} / {lm.get('mobile', '—')}"
+        shots = (f"[desktop]({r['slug']}--desktop.png) · "
+                 f"[mobile]({r['slug']}--mobile.png)")
+        warnings = r.get("warnings", [])
+        if any("px tall" in w for w in warnings):
+            shots += " ⚠️ tall page"
+        if any("regression" in w for w in warnings):
+            shots += " ⚠️ slow"
         lines.append(
-            f"| `{r['path']}` | {r['status']} | {con} | {net} | "
-            f"[desktop]({r['slug']}--desktop.png) · "
-            f"[mobile]({r['slug']}--mobile.png) |")
+            f"| `{r['path']}` | {r['status']} | {load} | {con} | {net} | "
+            f"{shots} |")
     detail = [r for r in report["results"]
-              if r.get("console") or r.get("failed_requests")]
+              if r.get("console") or r.get("failed_requests")
+              or r.get("warnings")]
     if detail:
         lines += ["", "## Console / network detail", ""]
         for r in detail:
             lines.append(f"### `{r['path']}`")
+            for w in r.get("warnings", []):
+                lines.append(f"- **capture warning**: {w}")
             for c in r.get("console", []):
                 lines.append(f"- **{c['type']}**: {c['text']}")
             for f in r.get("failed_requests", []):
@@ -276,6 +323,9 @@ def main() -> None:
                     help="crawl same-origin links from swept pages")
     ap.add_argument("--max", type=int, default=25)
     ap.add_argument("-o", "--out", default="qa-out")
+    ap.add_argument("--baseline",
+                    help="prior sweep's report.json, to flag per-route "
+                         "load-ms regressions >2x")
     ap.add_argument("--judge", action="store_true",
                     help="after the sweep, run a headless AI judgment pass "
                          "that writes RECOMMENDATIONS.md")
@@ -285,7 +335,13 @@ def main() -> None:
     routes = _load_routes(a.routes)
     if not routes and not a.discover:
         ap.error("give --routes and/or --discover")
-    report = sweep(a.url, routes, a.setup, Path(a.out), a.discover, a.max)
+    baseline = None
+    if a.baseline:
+        prior = json.loads(Path(a.baseline).read_text(encoding="utf-8"))
+        baseline = {r["path"]: r["load_ms"] for r in prior.get("results", [])
+                    if "load_ms" in r}
+    report = sweep(a.url, routes, a.setup, Path(a.out), a.discover, a.max,
+                   baseline)
     print(f"\nreport: {Path(a.out) / 'REPORT.md'}")
     errs = sum(len(r.get('console', [])) for r in report['results'])
     print(f"routes: {report['swept']}   console errors/warnings: {errs}")
