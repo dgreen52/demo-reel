@@ -43,6 +43,27 @@ SKIP = re.compile(
 # (found by automated QA review)
 TALL_PAGE_WARN_PX = 15000
 
+# Playwright's full-page screenshot freezes position:fixed elements (sticky
+# headers/action bars) at the offset they occupied in the ORIGINAL small
+# viewport instead of the true bottom of the expanded capture — so a fixed
+# bar can appear to overlap mid-page content in the evidence PNG while a real
+# scrolling browser never shows that overlap (confirmed against
+# templates/mobile_part_view.html's action bar: scrollHeight 1710px, bar
+# rect at scroll-to-bottom was y=784-844, well clear of all real content).
+# base.html's Feedback FAB is position:fixed on nearly every page (already
+# investigated + dimmed, Cycle 9) so it alone isn't worth flagging every
+# route; only warn when a page has an EXTRA fixed element beyond that
+# baseline of 1, and only once the page actually scrolls (fixed elements on
+# a viewport-fitting page render correctly either way)
+# (found by automated QA review — Nox)
+_KNOWN_BASELINE_FIXED = 1
+_FIXED_ELEMENTS_JS = """
+() => Array.from(document.querySelectorAll('body *')).filter(el => {
+    const cs = getComputedStyle(el);
+    return cs.position === 'fixed' && cs.visibility !== 'hidden' && cs.display !== 'none';
+}).length
+"""
+
 
 def _slug(path: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9]+", "-", path).strip("-")
@@ -140,6 +161,17 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
                         f"desktop page is {dheight}px tall — full-page "
                         "screenshot may render blank past ~15-19k px "
                         "(Chromium capture ceiling, not an app bug)")
+                if dheight > DESKTOP["height"]:
+                    fixed_n = page.evaluate(_FIXED_ELEMENTS_JS)
+                    if fixed_n > _KNOWN_BASELINE_FIXED:
+                        entry.setdefault("warnings", []).append(
+                            f"desktop page scrolls ({dheight}px) with "
+                            f"{fixed_n} position:fixed element(s) (baseline "
+                            f"is {_KNOWN_BASELINE_FIXED}, the Feedback FAB) — "
+                            "the extra one(s) may appear frozen mid-page in "
+                            "this full-page capture instead of the true "
+                            "bottom; verify overlap by scrolling in a real "
+                            "browser before filing it as a bug")
                 desktop_ms = round((time.time() - t0) * 1000)
 
                 t1 = time.time()
@@ -154,6 +186,17 @@ def sweep(base: str, routes: list[str], setup: str | None, out: Path,
                         f"mobile page is {mheight}px tall — full-page "
                         "screenshot may render blank past ~15-19k px "
                         "(Chromium capture ceiling, not an app bug)")
+                if mheight > MOBILE["height"]:
+                    fixed_n = mpage.evaluate(_FIXED_ELEMENTS_JS)
+                    if fixed_n > _KNOWN_BASELINE_FIXED:
+                        entry.setdefault("warnings", []).append(
+                            f"mobile page scrolls ({mheight}px) with "
+                            f"{fixed_n} position:fixed element(s) (baseline "
+                            f"is {_KNOWN_BASELINE_FIXED}, the Feedback FAB) — "
+                            "the extra one(s) may appear frozen mid-page in "
+                            "this full-page capture instead of the true "
+                            "bottom; verify overlap by scrolling in a real "
+                            "browser before filing it as a bug")
                 mobile_ms = round((time.time() - t1) * 1000)
 
                 # per-route load time, so a slow-creeping page shows up as
@@ -235,6 +278,8 @@ def _write_md(report: dict, out: Path) -> None:
         warnings = r.get("warnings", [])
         if any("px tall" in w for w in warnings):
             shots += " ⚠️ tall page"
+        if any("position:fixed" in w for w in warnings):
+            shots += " ⚠️ fixed elements"
         if any("regression" in w for w in warnings):
             shots += " ⚠️ slow"
         lines.append(
